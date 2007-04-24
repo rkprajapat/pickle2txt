@@ -7,10 +7,11 @@ This is a command-line tool for making sense of an otherwise abandoned Python
 pickle file. 
 
 Target formats:
-    DataTree
+    DataTree 
     JSON
     repr()
     ReStructured Text
+    S-expressions
     Plain text
     XML
     YAML
@@ -37,6 +38,10 @@ License: GPL (http://www.gnu.org/copyleft/gpl.html)
 
 import sys
 import pickle
+
+
+class WriteError(Exception): 
+    pass
 
 
 USAGE = """pickle2txt Usage
@@ -112,17 +117,25 @@ def to_format(obj, format):
 
 # -----------------------------------------------------------------------------
 
+class Format():
+    def __init__(self):
+        pass
+
+    def write(self, obj):
+        pass
+
 
 # DataTree
 
-class Format_datatree:
+class Format_datatree(Format):
     """Ivan Vecerina's data storage format, similar to JSON.
 
     Quirks:
      - Arrays are written with commas at the start of the next line, rather than
         at the end of the line containing the statement.
-     - The last comma in an array or dictionary listing is not necessary, but will not muck up this
-        reader implementation. Will it muck up the C++ and C implementations?
+     - The last comma in an array or dictionary listing is not necessary, but 
+        will not muck up this reader implementation. Will it muck up the C++ 
+        and C implementations?
 
     """
 
@@ -135,7 +148,7 @@ class Format_datatree:
     NL = os.linesep  # *surely* this is used in other classes, too?
 
     def __init__(self):
-        """Creates an instance that will write to @a dst using format @a mode."""
+        """Creates an instance at the top level."""
         self.depth_ = 0
 
 
@@ -207,21 +220,7 @@ class Format_datatree:
         return val + self.__class__.NL
 
 
-# -----------------------------------------------------------------------------
 # JSON
-
-# TODO:
-# Place these functions under one class JsonWriter
-
-class Format_json:
-    """Javascript's native data storage format."""
-    pass
-
-    def __init__(self):
-        pass
-
-    def write(self, obj):
-        pass
 
 # Using minjson.py from the json-py project
 # Copyright Jim Washington and Patrick D. Logan (LGPL license)
@@ -248,166 +247,145 @@ class Format_json:
 ##
 ##############################################################################
 
+class Format_json(Format):
+    """Javascript's native data storage format."""
 
-# minjson.py
-# use python's parser to read minimal javascript objects.
-# str's objects and fixes the text to write javascript.
+    from re import compile, sub, search, DOTALL
 
-# Thanks to Patrick Logan for starting the json-py project and making so many
-# good test cases.
+    # set to true if transmission size is much more important than speed
+    # only affects writing, and makes a minimal difference in output size.
+    alwaysStripWhiteSpace = False
 
-# Jim Washington 7 Aug 2005.
+    tfnTuple = (('True','true'),('False','false'),('None','null'),)
 
-from re import compile, sub, search, DOTALL
+    # re for a double-quoted string that has a single-quote in it
+    # but no double-quotes and python punctuation after:
+    redoublequotedstring = compile(r'"[^"]*\'[^"]*"[,\]\}:\)]')
+    escapedSingleQuote = r"\'"
+    escapedDoubleQuote = r'\"'
 
-# set to true if transmission size is much more important than speed
-# only affects writing, and makes a minimal difference in output size.
-alwaysStripWhiteSpace = False
-
-# add to this string if you wish to exclude additional math operators
-# from reading.
-badOperators = '*'
-
-#################################
-#   write object as JSON        #
-#################################
-
-#alwaysStripWhiteSpace is defined at the top of the module
-
-tfnTuple = (('True','true'),('False','false'),('None','null'),)
-
-def _replaceTrueFalseNone(aString):
-    """replace True, False, and None with javascript counterparts"""
-    for k in tfnTuple:
-        if k[0] in aString:
-            aString = aString.replace(k[0],k[1])
-    return aString
-
-def _handleCode(subStr,stripWhiteSpace):
-    """replace True, False, and None with javascript counterparts if
-       appropriate, remove unicode u's, fix long L's, make tuples
-       lists, and strip white space if requested
-    """
-    if 'e' in subStr:
-        #True, False, and None have 'e' in them. :)
-        subStr = (_replaceTrueFalseNone(subStr))
-    if stripWhiteSpace:
-        # re.sub might do a better job, but takes longer.
-        # Spaces are the majority of the whitespace, anyway...
-        subStr = subStr.replace(' ','')
-    if subStr[-1] in "uU":
-        #remove unicode u's
-        subStr = subStr[:-1]
-    if "L" in subStr:
-        #remove Ls from long ints
-        subStr = subStr.replace("L",'')
-    #do tuples as lists
-    if "(" in subStr:
-        subStr = subStr.replace("(",'[')
-    if ")" in subStr:
-        subStr = subStr.replace(")",']')
-    return subStr
-
-# re for a double-quoted string that has a single-quote in it
-# but no double-quotes and python punctuation after:
-redoublequotedstring = compile(r'"[^"]*\'[^"]*"[,\]\}:\)]')
-escapedSingleQuote = r"\'"
-escapedDoubleQuote = r'\"'
-
-def doQuotesSwapping(aString):
-    """rewrite doublequoted strings with single quotes as singlequoted strings with
-    escaped single quotes"""
-    s = []
-    foundlocs = redoublequotedstring.finditer(aString)
-    prevend = 0
-    for loc in foundlocs:
-        start,end = loc.span()
-        s.append(aString[prevend:start])
-        tempstr = aString[start:end]
-        endchar = tempstr[-1]
-        ts1 = tempstr[1:-2]
-        ts1 = ts1.replace("'",escapedSingleQuote)
-        ts1 = "'%s'%s" % (ts1,endchar)
-        s.append(ts1)
-        prevend = end
-    s.append(aString[prevend:])
-    return ''.join(s)
-
-def _pyexpr2jsexpr(aString, stripWhiteSpace):
-    """Take advantage of python's formatting of string representations of
-    objects.  Python always uses "'" to delimit strings.  Except it doesn't when
-    there is ' in the string.  Fix that, then, if we split
-    on that delimiter, we have a list that alternates non-string text with
-    string text.  Since string text is already properly escaped, we
-    only need to replace True, False, and None in non-string text and
-    remove any unicode 'u's preceding string values.
-
-    if stripWhiteSpace is True, remove spaces, etc from the non-string
-    text.
-    """
-    inSingleQuote = False
-    inDoubleQuote = False
-    #python will quote with " when there is a ' in the string,
-    #so fix that first
-    if redoublequotedstring.search(aString):
-        aString = doQuotesSwapping(aString)
-    marker = None
-    if escapedSingleQuote in aString:
-        #replace escaped single quotes with a marker
-        marker = markerBase = '|'
-        markerCount = 1
-        while marker in aString:
-            #if the marker is already there, make it different
-            markerCount += 1
-            marker = markerBase * markerCount
-        aString = aString.replace(escapedSingleQuote,marker)
-
-    #escape double-quotes
-    aString = aString.replace('"',escapedDoubleQuote)
-    #split the string on the real single-quotes
-    splitStr = aString.split("'")
-    outList = []
-    alt = True
-    for subStr in splitStr:
-        #if alt is True, non-string; do replacements
-        if alt:
-            subStr = _handleCode(subStr,stripWhiteSpace)
-        outList.append(subStr)
-        alt = not alt
-    result = '"'.join(outList)
-    if marker:
-        #put the escaped single-quotes back as "'"
-        result = result.replace(marker,"'")
-    return result
-
-def write(obj, encoding="utf-8",stripWhiteSpace=alwaysStripWhiteSpace):
-    """Represent the object as a string.  Do any necessary fix-ups
-    with pyexpr2jsexpr"""
-    try:
-        #not really sure encode does anything here
-        aString = str(obj).encode(encoding)
-    except UnicodeEncodeError:
-        aString = obj.encode(encoding)
-    if isinstance(obj,basestring):
-        if '"' in aString:
-            aString = aString.replace(escapedDoubleQuote,'"')
-            result = '"%s"' % aString.replace('"',escapedDoubleQuote)
+    def write(self, obj, encoding="utf-8",stripWhiteSpace=alwaysStripWhiteSpace):
+        """Represent the object as a string.  Do any necessary fix-ups
+        with pyexpr2jsexpr"""
+        try:
+            #not really sure encode does anything here
+            aString = str(obj).encode(encoding)
+        except UnicodeEncodeError:
+            aString = obj.encode(encoding)
+        if isinstance(obj,basestring):
+            if '"' in aString:
+                aString = aString.replace(escapedDoubleQuote,'"')
+                result = '"%s"' % aString.replace('"',escapedDoubleQuote)
+            else:
+                result = '"%s"' % aString
         else:
-            result = '"%s"' % aString
-    else:
-        result = _pyexpr2jsexpr(aString,stripWhiteSpace).encode(encoding)
-    return result
+            result = _pyexpr2jsexpr(aString,stripWhiteSpace).encode(encoding)
+        return result
 
+    def _pyexpr2jsexpr(aString, stripWhiteSpace):
+        """Take advantage of python's formatting of string representations of
+        objects.  Python always uses "'" to delimit strings.  Except it doesn't when
+        there is ' in the string.  Fix that, then, if we split
+        on that delimiter, we have a list that alternates non-string text with
+        string text.  Since string text is already properly escaped, we
+        only need to replace True, False, and None in non-string text and
+        remove any unicode 'u's preceding string values.
+
+        if stripWhiteSpace is True, remove spaces, etc from the non-string
+        text.
+        """
+        inSingleQuote = False
+        inDoubleQuote = False
+        #python will quote with " when there is a ' in the string,
+        #so fix that first
+        if redoublequotedstring.search(aString):
+            aString = doQuotesSwapping(aString)
+        marker = None
+        if escapedSingleQuote in aString:
+            #replace escaped single quotes with a marker
+            marker = markerBase = '|'
+            markerCount = 1
+            while marker in aString:
+                #if the marker is already there, make it different
+                markerCount += 1
+                marker = markerBase * markerCount
+            aString = aString.replace(escapedSingleQuote,marker)
+
+        #escape double-quotes
+        aString = aString.replace('"',escapedDoubleQuote)
+        #split the string on the real single-quotes
+        splitStr = aString.split("'")
+        outList = []
+        alt = True
+        for subStr in splitStr:
+            #if alt is True, non-string; do replacements
+            if alt:
+                subStr = _handleCode(subStr,stripWhiteSpace)
+            outList.append(subStr)
+            alt = not alt
+        result = '"'.join(outList)
+        if marker:
+            #put the escaped single-quotes back as "'"
+            result = result.replace(marker,"'")
+        return result
+
+    def doQuotesSwapping(aString):
+        """rewrite doublequoted strings with single quotes as singlequoted strings with
+        escaped single quotes"""
+        s = []
+        foundlocs = redoublequotedstring.finditer(aString)
+        prevend = 0
+        for loc in foundlocs:
+            start,end = loc.span()
+            s.append(aString[prevend:start])
+            tempstr = aString[start:end]
+            endchar = tempstr[-1]
+            ts1 = tempstr[1:-2]
+            ts1 = ts1.replace("'",escapedSingleQuote)
+            ts1 = "'%s'%s" % (ts1,endchar)
+            s.append(ts1)
+            prevend = end
+        s.append(aString[prevend:])
+        return ''.join(s)
+
+    def _replaceTrueFalseNone(aString):
+        """replace True, False, and None with javascript counterparts"""
+        for k in tfnTuple:
+            if k[0] in aString:
+                aString = aString.replace(k[0],k[1])
+        return aString
+
+    def _handleCode(subStr,stripWhiteSpace):
+        """replace True, False, and None with javascript counterparts if
+        appropriate, remove unicode u's, fix long L's, make tuples
+        lists, and strip white space if requested
+        """
+        if 'e' in subStr:
+            #True, False, and None have 'e' in them. :)
+            subStr = (_replaceTrueFalseNone(subStr))
+        if stripWhiteSpace:
+            # re.sub might do a better job, but takes longer.
+            # Spaces are the majority of the whitespace, anyway...
+            subStr = subStr.replace(' ','')
+        if subStr[-1] in "uU":
+            #remove unicode u's
+            subStr = subStr[:-1]
+        if "L" in subStr:
+            #remove Ls from long ints
+            subStr = subStr.replace("L",'')
+        #do tuples as lists
+        if "(" in subStr:
+            subStr = subStr.replace("(",'[')
+        if ")" in subStr:
+            subStr = subStr.replace(")",']')
+        return subStr
 
 
 
 # repr()
 
-class Format_repr:
+class Format_repr(Format):
     """Python code representation via the built-in repr()."""
-
-    def __init__(self):
-        pass
 
     def write(self, obj):
         return repr(self.obj)
@@ -415,13 +393,19 @@ class Format_repr:
 
 # ReStructured Text
 
-class Format_rst:
+class Format_rst(Format):
     """ Eh """
     # TODO:
     # Look for existing code
 
-    def __init__(self):
+    def write(self, obj):
         pass
+
+# S-Expressions (Lisp)
+
+class Format_lisp(Format):
+    """S-expressions, a.k.a. Lisp code."""
+    # See Steve Yegge's "The Emacs Problem" for an example
 
     def write(self, obj):
         pass
@@ -429,11 +413,8 @@ class Format_rst:
 
 # Plain text
 
-class Format_text:
+class Format_text(Format)::
     """ Prints all attributes as simple "Attribute: Value\n" pairs """
-
-    def __init__(self):
-        pass
 
     def write(self):
         # Recursively go through the object and flatten it, basically
@@ -446,13 +427,10 @@ class Format_text:
 
 # XML
 
-class Format_xml:
+class Format_xml(Format):
     """Standard XML 1.0 using Python builtins."""
 
     from xml.dom import minidom
-
-    def __init__(self):
-        pass
 
     def write(self, obj):
         pass
@@ -460,21 +438,16 @@ class Format_xml:
 
 # YAML
 
-class Format_yaml:
+class Format_yaml(Format):
     """Yet Another Markup Language. Ruby seems to like it."""
     # TODO:
     # Look for existing code
-
-    def __init__(self):
-        pass
 
     def write(self, obj):
         pass
 
 
-class WriteError(Exception): 
-    pass
-
+# -----------------------------------------------------------------------------
 
 if __name__is "__main__":
     main()
