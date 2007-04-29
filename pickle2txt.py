@@ -9,7 +9,7 @@ pickle file.
 Target formats:
     DataTree 
     JSON
-    repr()
+    Python
     ReStructured Text
     S-expressions
     Plain text
@@ -20,7 +20,7 @@ It's OK to specify more than one format. If no input files are given, the
 script searches the current directory. If no options are given, the usage guide
 is printed.
 
-Authors: Eric Talevich & Contributors (see code for names)
+Authors: Eric Talevich & contributors (see code for credits)
 License: GPL (http://www.gnu.org/copyleft/gpl.html)
 
 """
@@ -34,7 +34,7 @@ License: GPL (http://www.gnu.org/copyleft/gpl.html)
 #
 # ENH: for formats that already have projects devoted to them, check to see if 
 # the popular (faster) modules are available (e.g. simplejson). 
-# If so, use them; if not, use the sampled code.
+# If so, use them; if not, use this code.
 
 import sys
 import pickle
@@ -63,9 +63,9 @@ def main():
     parser.add_option("-j", "--json", dest="to_json",
                         action="store_true",
                         help="Output in JSON format")
-    parser.add_option("-r", "--repr", dest="to_repr",
+    parser.add_option("-p", "--py", dest="to_py",
                         action="store_true",
-                        help="Output as a Python code representation")
+                        help="Output as a formatted Python code representation")
     parser.add_option("-s", "--rst", dest="to_rst",
                         action="store_true",
                         help="Output as ReStructured Text")
@@ -102,7 +102,7 @@ def main():
         except UnpickleError:
             pass # file wasn't a valid pickle file, print another warning to stderr
 
-        for format in ("datatree", "json", "repr", "rst", "text", "xml", "yaml"):
+        for format in ("datatree", "json", "py", "rst", "text", "xml", "yaml"):
             if eval("options.to_" + format):
                 outfile = file(path + '.' + format, 'w')
                 str = to_format(obj, format)
@@ -382,13 +382,19 @@ class Format_json(Format):
 
 
 
-# repr()
+# Python code
 
-class Format_repr(Format):
-    """Python code representation via the built-in repr()."""
+class Format_py(Format):
+    """Python code representation via the pprint module."""
 
     def write(self, obj):
-        return repr(self.obj)
+        from pprint import pprint
+        import cStringIO
+        output = cStringIO.StringIO()
+        pprint.pprint(obj, stream=output, indent=4)
+        contents = output.getvalue()
+        output.close()
+        return contents
 
 
 # ReStructured Text
@@ -445,6 +451,13 @@ class Format_yaml(Format):
 
     def write(self, obj):
         pass
+
+# -----------------------------------------------------------------------------
+
+def flat_traversal(obj):
+    pass
+
+
 
 
 # -----------------------------------------------------------------------------
