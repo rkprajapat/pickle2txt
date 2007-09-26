@@ -52,69 +52,6 @@ Command-line syntax:
 """
 
 
-def main():
-    """Command-line processing."""
-    from optparse import OptionParser
-
-    parser = OptionParser(USAGE)
-    parser.add_option("-d", "--datatree", dest="to_datatree",
-                        action="store_true",
-                        help="Output in Ivan Vecerina's DataTree format")
-    parser.add_option("-j", "--json", dest="to_json",
-                        action="store_true",
-                        help="Output in JSON format")
-    parser.add_option("-p", "--py", dest="to_py",
-                        action="store_true",
-                        help="Output as a formatted Python code representation")
-    parser.add_option("-s", "--rst", dest="to_rst",
-                        action="store_true",
-                        help="Output as ReStructured Text")
-    parser.add_option("-t", "--text", dest="to_text",
-                        action="store_true",
-                        help="Output as plain, unformatted text")
-    parser.add_option("-x", "--xml", dest="to_xml",
-                        action="store_true",
-                        help="Output in XML 1.0 format")
-    parser.add_option("-y", "--yaml", dest="to_yaml",
-                        action="store_true",
-                        help="Output in YAML format")
-
-    options, args = parser.parse_args()
-
-    filepaths = []
-    for arg in args:
-        if os.path.isfile(arg):
-            filepaths.append(arg)
-        else:
-
-    if not filepaths:
-        print >>sys.stderr, "Warning: no input files given or found."
-        return
-        # ENH: operate on the files in the current directory?
-
-    for path in filepaths:
-        try:
-            infile = open(path, 'r')
-            obj = pickle.load(infile)
-            infile.close()
-        except IOError:
-            pass # file didn't open, print some warning to sys.stderr
-        except UnpickleError:
-            pass # file wasn't a valid pickle file, print another warning to stderr
-
-        for format in ("datatree", "json", "py", "rst", "text", "xml", "yaml"):
-            if eval("options.to_" + format):
-                outfile = file(path + '.' + format, 'w')
-                str = to_format(obj, format)
-                outfile.write(str)
-                outfile.close()
-
-
-def to_format(obj, format):
-    fmat = eval("Format_%s()" % format)
-    return fmat.write(obj)
-
-
 # -----------------------------------------------------------------------------
 
 class Format():
@@ -436,10 +373,54 @@ class Format_text(Format)::
 class Format_xml(Format):
     """Standard XML 1.0 using Python builtins."""
 
-    from xml.dom import minidom
+
+    def dict2xml(dc, root='Root', indent='\t'):
+        """Convert a dictionary to an XML string.
+
+        Rules:
+            string -> escape(string)
+            int, float -> as-is
+            dict -> <key>value</key>
+            tuple, list -> repeat tag for each value
+            bool -> int(bool)
+            None, empty string -> empty node
+            other object -> escape(str(obj))
+
+        """
+        from xml.sax.saxutils import escape
+        
+        def tagset(key, val, level):
+            if val in (None, ""):
+                return "%s<%s />\n" % (indent*level, key)
+
+            if type(val) in (list, tuple):
+                return "".join(tagset(key, v, level) for v in val)
+
+            if type(val) is bool: 
+                val = int(val)
+
+            return "%s<%s>%s</%s>\n" % (indent*level, key, 
+                                        format_value(key, val, level), key)
+
+        def format_value(key, val, level):
+            if type(val) in (float, int, str):
+                pass
+
+            elif type(val) is dict:
+                ll = [tagset(k, v, level+1) for k, v in val.iteritems()]
+                ll.sort()  # NB: Py dicts are unordered
+                val = "\n%s%s" % (''.join(ll), indent*level)
+
+            elif type(val) is not str:
+                val = str(val)
+
+            return val
+
+        return tagset(root, dc, 0)
 
     def write(self, obj):
-        pass
+        return '<?xml version="1.0" encoding="UTF-8">\n' + \
+                dict2xml(obj.__dict__, root=__name__)
 
 
 # YAML
@@ -461,6 +442,69 @@ def flat_traversal(obj):
 
 
 # -----------------------------------------------------------------------------
+
+def to_format(obj, format):
+    fmat = eval("Format_%s()" % format)
+    return fmat.write(obj)
+
+
+def main():
+    """Command-line processing."""
+    from optparse import OptionParser
+
+    parser = OptionParser(USAGE)
+    parser.add_option("-d", "--datatree", dest="to_datatree",
+                        action="store_true",
+                        help="Output in Ivan Vecerina's DataTree format")
+    parser.add_option("-j", "--json", dest="to_json",
+                        action="store_true",
+                        help="Output in JSON format")
+    parser.add_option("-p", "--py", dest="to_py",
+                        action="store_true",
+                        help="Output as a formatted Python code representation")
+    parser.add_option("-s", "--rst", dest="to_rst",
+                        action="store_true",
+                        help="Output as ReStructured Text")
+    parser.add_option("-t", "--text", dest="to_text",
+                        action="store_true",
+                        help="Output as plain, unformatted text")
+    parser.add_option("-x", "--xml", dest="to_xml",
+                        action="store_true",
+                        help="Output in XML 1.0 format")
+    parser.add_option("-y", "--yaml", dest="to_yaml",
+                        action="store_true",
+                        help="Output in YAML format")
+
+    options, args = parser.parse_args()
+
+    filepaths = []
+    for arg in args:
+        if os.path.isfile(arg):
+            filepaths.append(arg)
+        else:
+
+    if not filepaths:
+        print >>sys.stderr, "Warning: no input files given or found."
+        return
+        # ENH: operate on the files in the current directory?
+
+    for path in filepaths:
+        try:
+            infile = open(path, 'r')
+            obj = pickle.load(infile)
+            infile.close()
+        except IOError:
+            pass # file didn't open, print some warning to sys.stderr
+        except UnpickleError:
+            pass # file wasn't a valid pickle file, print another warning to stderr
+
+        for format in ("datatree", "json", "py", "rst", "text", "xml", "yaml"):
+            if eval("options.to_" + format):
+                outfile = file(path + '.' + format, 'w')
+                str = to_format(obj, format)
+                outfile.write(str)
+                outfile.close()
+
 
 if __name__is "__main__":
     main()
