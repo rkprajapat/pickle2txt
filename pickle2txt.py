@@ -1,6 +1,21 @@
 #!/usr/bin/env python
 # -*- coding: iso-8859-15 -*-
 
+##    This library is free software; you can redistribute it and/or
+##    modify it under the terms of the GNU Lesser General Public
+##    License as published by the Free Software Foundation; either
+##    version 2.1 of the License, or (at your option) any later version.
+##
+##    This library is distributed in the hope that it will be useful,
+##    but WITHOUT ANY WARRANTY; without even the implied warranty of
+##    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+##    Lesser General Public License for more details.=
+##
+##    You should have received a copy of the GNU Lesser General Public
+##    License along with this library; if not, write to the Free Software
+##    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+##
+
 """Extracts an object from any pickled file and produces a text file.
 
 This is a command-line tool for making sense of an otherwise abandoned Python
@@ -10,8 +25,7 @@ Target formats:
     DataTree 
     JSON
     Python
-    ReStructured Text
-    S-expressions
+    S-expressions (SXML)
     Plain text
     XML
     YAML
@@ -54,17 +68,19 @@ Command-line syntax:
 
 # -----------------------------------------------------------------------------
 
-class Format():
+class Format(object):
+
     def __init__(self):
         pass
 
-    def write(self, obj):
+    def write(self, obj, name):
         pass
 
 
 # DataTree
 
 class Format_datatree(Format):
+
     """Ivan Vecerina's data storage format, similar to JSON.
 
     Quirks:
@@ -88,7 +104,6 @@ class Format_datatree(Format):
         """Creates an instance at the top level."""
         self.depth_ = 0
 
-
     def write(self, obj):
         """Serialize the given object and return as a string."""
         NL = "\n\r"
@@ -97,11 +112,11 @@ class Format_datatree(Format):
         dstlist.append(2*NL + "# EOF" + NL)
         return ''.join(dstlist)
 
-
     def setValue(self, val):
-        """Determines what to do with the given value, and calls the function to do it.
+        """Calls the appropriate function to handle the given value.
 
-        Recurses with setDictionary or setArray if the value is a dictionary or sequence.
+        Recurses with setDictionary or setArray if the value is a dictionary or
+        sequence.
 
         """
         valtype = type(val)
@@ -168,30 +183,13 @@ class Format_datatree(Format):
 ##    minjson.py implements JSON reading and writing in python.
 ##    Copyright (c) 2005 Jim Washington and Contributors.
 ##
-##    This library is free software; you can redistribute it and/or
-##    modify it under the terms of the GNU Lesser General Public
-##    License as published by the Free Software Foundation; either
-##    version 2.1 of the License, or (at your option) any later version.
-##
-##    This library is distributed in the hope that it will be useful,
-##    but WITHOUT ANY WARRANTY; without even the implied warranty of
-##    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-##    Lesser General Public License for more details.=
-##
-##    You should have received a copy of the GNU Lesser General Public
-##    License along with this library; if not, write to the Free Software
-##    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
-##
 ##############################################################################
 
 class Format_json(Format):
+
     """Javascript's native data storage format."""
 
     from re import compile, sub, search, DOTALL
-
-    # set to true if transmission size is much more important than speed
-    # only affects writing, and makes a minimal difference in output size.
-    alwaysStripWhiteSpace = False
 
     tfnTuple = (('True','true'),('False','false'),('None','null'),)
 
@@ -201,9 +199,12 @@ class Format_json(Format):
     escapedSingleQuote = r"\'"
     escapedDoubleQuote = r'\"'
 
-    def write(self, obj, encoding="utf-8",stripWhiteSpace=alwaysStripWhiteSpace):
-        """Represent the object as a string.  Do any necessary fix-ups
-        with pyexpr2jsexpr"""
+    def write(self, obj, name, encoding="utf-8"):
+        """Represent the object as a string.  
+        
+        Do any necessary fix-ups with pyexpr2jsexpr.
+        
+        """
         try:
             #not really sure encode does anything here
             aString = str(obj).encode(encoding)
@@ -216,20 +217,19 @@ class Format_json(Format):
             else:
                 result = '"%s"' % aString
         else:
-            result = _pyexpr2jsexpr(aString,stripWhiteSpace).encode(encoding)
+            result = _pyexpr2jsexpr(aString).encode(encoding)
         return result
 
-    def _pyexpr2jsexpr(aString, stripWhiteSpace):
-        """Take advantage of python's formatting of string representations of
-        objects.  Python always uses "'" to delimit strings.  Except it doesn't when
-        there is ' in the string.  Fix that, then, if we split
-        on that delimiter, we have a list that alternates non-string text with
-        string text.  Since string text is already properly escaped, we
-        only need to replace True, False, and None in non-string text and
-        remove any unicode 'u's preceding string values.
+    def _pyexpr2jsexpr(aString):
+        """Use python's formatting of string representations of objects.  
+        
+        Python always uses "'" to delimit strings.  Except it doesn't when
+        there is ' in the string.  Fix that, then, if we split on that
+        delimiter, we have a list that alternates non-string text with string
+        text.  Since string text is already properly escaped, we only need to
+        replace True, False, and None in non-string text and remove any unicode
+        'u's preceding string values.
 
-        if stripWhiteSpace is True, remove spaces, etc from the non-string
-        text.
         """
         inSingleQuote = False
         inDoubleQuote = False
@@ -257,7 +257,7 @@ class Format_json(Format):
         for subStr in splitStr:
             #if alt is True, non-string; do replacements
             if alt:
-                subStr = _handleCode(subStr,stripWhiteSpace)
+                subStr = _handleCode(subStr)
             outList.append(subStr)
             alt = not alt
         result = '"'.join(outList)
@@ -267,8 +267,8 @@ class Format_json(Format):
         return result
 
     def doQuotesSwapping(aString):
-        """rewrite doublequoted strings with single quotes as singlequoted strings with
-        escaped single quotes"""
+        """Rewrite double-quoted strings with single quotes as single-quoted
+        strings with escaped single quotes."""
         s = []
         foundlocs = redoublequotedstring.finditer(aString)
         prevend = 0
@@ -286,24 +286,20 @@ class Format_json(Format):
         return ''.join(s)
 
     def _replaceTrueFalseNone(aString):
-        """replace True, False, and None with javascript counterparts"""
+        """Replace True, False, and None with javascript counterparts"""
         for k in tfnTuple:
             if k[0] in aString:
                 aString = aString.replace(k[0],k[1])
         return aString
 
-    def _handleCode(subStr,stripWhiteSpace):
-        """replace True, False, and None with javascript counterparts if
-        appropriate, remove unicode u's, fix long L's, make tuples
-        lists, and strip white space if requested
+    def _handleCode(subStr):
+        """Replace True, False, and None with javascript counterparts if
+        appropriate, remove unicode u's, fix long L's, make tuples lists, and
+        strip white space if requested
         """
         if 'e' in subStr:
             #True, False, and None have 'e' in them. :)
             subStr = (_replaceTrueFalseNone(subStr))
-        if stripWhiteSpace:
-            # re.sub might do a better job, but takes longer.
-            # Spaces are the majority of the whitespace, anyway...
-            subStr = subStr.replace(' ','')
         if subStr[-1] in "uU":
             #remove unicode u's
             subStr = subStr[:-1]
@@ -318,10 +314,10 @@ class Format_json(Format):
         return subStr
 
 
-
 # Python code
 
 class Format_py(Format):
+
     """Python code representation via the pprint module."""
 
     def write(self, obj):
@@ -334,32 +330,68 @@ class Format_py(Format):
         return contents
 
 
-# ReStructured Text
-
-class Format_rst(Format):
-    """ Eh """
-    # TODO:
-    # Look for existing code
-
-    def write(self, obj):
-        pass
-
-# S-Expressions (Lisp)
+# S-Expressions (Lisp/SXML)
 
 class Format_lisp(Format):
-    """S-expressions, a.k.a. Lisp code."""
-    # See Steve Yegge's "The Emacs Problem" for an example
+
+    """S-expressions, a.k.a. Lisp code. Specifically, SXML."""
+
+    def dict2sexp(self, dc, root='Root', indent='\t'):
+        """Convert a dictionary to an SXML string.
+
+        Rules:
+            int, float -> as-is
+            string -> "string"
+            dict -> (key value)
+            tuple, list -> repeat tag for each value
+            bool -> int(bool)
+            None, empty string -> empty node
+            other object -> str(obj)
+
+        """
+        from xml.sax.saxutils import escape
+
+        def tagset(key, val, level):
+            if val in (None, ""):
+                return "%s(%s \"\")\n" % (indent*level, key)
+
+            if type(val) in (list, tuple):
+                return "".join(tagset(key, v, level) for v in val)
+
+            if type(val) is bool: 
+                val = int(val)
+
+            return "%s(%s %s)\n" % (indent*level, key, 
+                                    format_value(key, val, level))
+
+        def format_value(key, val, level):
+            if type(val) in (float, int):
+                pass
+
+            elif type(val) is dict:
+                ll = [tagset(k, v, level+1) for k, v in val.iteritems()]
+                ll.sort()  # NB: Py dicts are unordered
+                val = "\n%s%s" % (''.join(ll), indent*level)
+
+            else:
+                val = '"%s"' % val
+
+            return val
+
+        return tagset(root, dc, 0)
 
     def write(self, obj):
-        pass
+        return '(*TOP* (*PI* xml "version=\"1.0\" encoding=\"UTF-8\"")\n' + \
+                self.dict2sexp(obj.__dict__, root=__name__) + ')\n'
 
 
 # Plain text
 
 class Format_text(Format)::
+
     """ Prints all attributes as simple "Attribute: Value\n" pairs """
 
-    def write(self):
+    def write(self, obj):
         # Recursively go through the object and flatten it, basically
         str = ''
         # TODO: recurse
@@ -371,10 +403,11 @@ class Format_text(Format)::
 # XML
 
 class Format_xml(Format):
+
     """Standard XML 1.0 using Python builtins."""
 
 
-    def dict2xml(dc, root='Root', indent='\t'):
+    def dict2xml(self, dc, root='Root', indent='\t'):
         """Convert a dictionary to an XML string.
 
         Rules:
@@ -426,7 +459,7 @@ class Format_xml(Format):
 # YAML
 
 class Format_yaml(Format):
-    """Yet Another Markup Language. Ruby seems to like it."""
+    """Yet Another Markup Language."""
     # TODO:
     # Look for existing code
 
@@ -443,9 +476,9 @@ def flat_traversal(obj):
 
 # -----------------------------------------------------------------------------
 
-def to_format(obj, format):
+def to_format(obj, format, name):
     fmat = eval("Format_%s()" % format)
-    return fmat.write(obj)
+    return fmat.write(obj, name)
 
 
 def main():
@@ -462,9 +495,6 @@ def main():
     parser.add_option("-p", "--py", dest="to_py",
                         action="store_true",
                         help="Output as a formatted Python code representation")
-    parser.add_option("-s", "--rst", dest="to_rst",
-                        action="store_true",
-                        help="Output as ReStructured Text")
     parser.add_option("-t", "--text", dest="to_text",
                         action="store_true",
                         help="Output as plain, unformatted text")
@@ -498,10 +528,10 @@ def main():
         except UnpickleError:
             pass # file wasn't a valid pickle file, print another warning to stderr
 
-        for format in ("datatree", "json", "py", "rst", "text", "xml", "yaml"):
+        for format in ("datatree", "json", "py", "text", "xml", "yaml"):
             if eval("options.to_" + format):
                 outfile = file(path + '.' + format, 'w')
-                str = to_format(obj, format)
+                str = to_format(obj, format, path)
                 outfile.write(str)
                 outfile.close()
 
