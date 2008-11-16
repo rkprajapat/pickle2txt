@@ -68,11 +68,18 @@ from types import BooleanType, ClassType, NoneType, \
                   DictType, ListType, StringTypes, TupleType
 
 
+ENCODING = "utf-8"
+
+PRIMITIVES = (ComplexType, FloatType, IntType, LongType,
+              StringTypes, BooleanType, NoneType, TupleType, ListType)
+
 def echo(msg):
+    """Print a message to standard error."""
     sys.stderr.write("pickle2txt: %s\n" % msg)
 
 
 class WriteError(Exception): 
+    """Our generic exception."""
     pass
 
 
@@ -80,11 +87,13 @@ class WriteError(Exception):
 # -----------------------------------------------------------------------------
 
 class Format(object):
+    """Base class for those that output specific formats."""
 
     def __init__(self):
         pass
 
-    def write(self, obj, name):
+    def write(self, obj):
+        """Override this in the derived class."""
         pass
 
 
@@ -105,6 +114,7 @@ class Format_datatree(Format):
 
     def __init__(self):
         """Creates an instance at the top level."""
+        Format.__init__(self)
         self.depth_ = 0
 
     def write(self, obj):
@@ -202,29 +212,29 @@ class Format_json(Format):
     escapedDoubleQuote = r'\"'
 
     def __init__(self):
-        pass
+        Format.__init__(self)
 
-    def write(self, obj, name, encoding="utf-8"):
+    def write(self, obj):
         """Represent the object as a string.  
         
         Do any necessary fix-ups with pyexpr2jsexpr.
         """
         try:
             #not really sure encode does anything here
-            aString = str(obj).encode(encoding)
+            a_string = str(obj).encode(ENCODING)
         except UnicodeEncodeError:
-            aString = obj.encode(encoding)
+            a_string = obj.encode(ENCODING)
         if isinstance(obj, basestring):
-            if '"' in aString:
-                aString = aString.replace(self.escapedDoubleQuote, '"')
-                result = '"%s"' % aString.replace('"', self.escapedDoubleQuote)
+            if '"' in a_string:
+                a_string = a_string.replace(self.escapedDoubleQuote, '"')
+                result = '"%s"' % a_string.replace('"', self.escapedDoubleQuote)
             else:
-                result = '"%s"' % aString
+                result = '"%s"' % a_string
         else:
-            result = self._pyexpr2jsexpr(aString).encode(encoding)
+            result = self.serialize(a_string).encode(ENCODING)
         return result
 
-    def _pyexpr2jsexpr(self, aString):
+    def serialize(self, a_string):
         """Use python's formatting of string representations of objects.  
         
         Python always uses "'" to delimit strings.  Except it doesn't when
@@ -234,87 +244,86 @@ class Format_json(Format):
         replace True, False, and None in non-string text and remove any unicode
         'u's preceding string values.
         """
-        inSingleQuote = False
-        inDoubleQuote = False
+        # inSingleQuote = False
+        # inDoubleQuote = False
         #python will quote with " when there is a ' in the string,
         #so fix that first
-        if self.redoublequotedstring.search(aString):
-            aString = self.doQuotesSwapping(aString)
+        if self.redoublequotedstring.search(a_string):
+            a_string = self.swap_quotes(a_string)
         marker = None
-        if self.escapedSingleQuote in aString:
+        if self.escapedSingleQuote in a_string:
             #replace escaped single quotes with a marker
-            marker = markerBase = '|'
-            markerCount = 1
-            while marker in aString:
+            marker = marker_base = '|'
+            marker_count = 1
+            while marker in a_string:
                 #if the marker is already there, make it different
-                markerCount += 1
-                marker = markerBase * markerCount
-            aString = aString.replace(self.escapedSingleQuote, marker)
+                marker_count += 1
+                marker = marker_base * marker_count
+            a_string = a_string.replace(self.escapedSingleQuote, marker)
 
         #escape double-quotes
-        aString = aString.replace('"', self.escapedDoubleQuote)
+        a_string = a_string.replace('"', self.escapedDoubleQuote)
         #split the string on the real single-quotes
-        splitStr = aString.split("'")
-        outList = []
+        outlist = []
         alt = True
-        for subStr in splitStr:
+        for substr in a_string.split("'"):
             #if alt is True, non-string; do replacements
             if alt:
-                subStr = self._handleCode(subStr)
-            outList.append(subStr)
+                substr = self.jsonify(substr)
+            outlist.append(substr)
             alt = not alt
-        result = '"'.join(outList)
+        result = '"'.join(outlist)
         if marker:
             #put the escaped single-quotes back as "'"
             result = result.replace(marker,"'")
         return result
 
-    def doQuotesSwapping(self, aString):
+    def swap_quotes(self, a_string):
         """Rewrite double-quoted strings with single quotes as single-quoted
         strings with escaped single quotes."""
         s = []
-        foundlocs = self.redoublequotedstring.finditer(aString)
+        foundlocs = self.redoublequotedstring.finditer(a_string)
         prevend = 0
         for loc in foundlocs:
             start, end = loc.span()
-            s.append(aString[prevend:start])
-            tempstr = aString[start:end]
+            s.append(a_string[prevend:start])
+            tempstr = a_string[start:end]
             endchar = tempstr[-1]
             ts1 = tempstr[1:-2]
             ts1 = ts1.replace("'", self.escapedSingleQuote)
             ts1 = "'%s'%s" % (ts1, endchar)
             s.append(ts1)
             prevend = end
-        s.append(aString[prevend:])
+        s.append(a_string[prevend:])
         return ''.join(s)
 
-    def _replaceTrueFalseNone(self, aString):
+    def replace_bool_none(self, a_string):
         """Replace True, False, and None with javascript counterparts"""
         for k in self.tfnTuple:
-            if k[0] in aString:
-                aString = aString.replace(k[0], k[1])
-        return aString
+            if k[0] in a_string:
+                a_string = a_string.replace(k[0], k[1])
+        return a_string
 
-    def _handleCode(self, subStr):
+    def jsonify(self, substr):
         """Replace True, False, and None with javascript counterparts if
         appropriate, remove unicode u's, fix long L's, make tuples lists, and
         strip white space if requested
         """
-        if 'e' in subStr:
+        if 'e' in substr:
             #True, False, and None have 'e' in them. :)
-            subStr = (self._replaceTrueFalseNone(subStr))
-        if subStr[-1] in "uU":
+            substr = (self.replace_bool_none(substr))
+        if substr[-1] in "uU":
             #remove unicode u's
-            subStr = subStr[:-1]
-        if "L" in subStr:
+            substr = substr[:-1]
+        if "L" in substr:
             #remove Ls from long ints
-            subStr = subStr.replace("L",'')
+            substr = substr.replace("L",'')
         #do tuples as lists
-        if "(" in subStr:
-            subStr = subStr.replace("(",'[')
-        if ")" in subStr:
-            subStr = subStr.replace(")",']')
-        return subStr
+        if "(" in substr:
+            substr = substr.replace("(",'[')
+        if ")" in substr:
+            substr = substr.replace(")",']')
+        return substr
 
 
 # -----------------------------------------------------------------------------
@@ -324,9 +333,10 @@ class Format_py(Format):
     """Python code representation via the pprint module."""
     
     def __init__(self):
-        pass
+        Format.__init__(self)
 
     def write(self, obj):
+        """Serialize."""
         from cStringIO import StringIO
         output = StringIO()
         pprint.pprint(obj, stream=output, indent=4)
@@ -341,8 +351,8 @@ class Format_py(Format):
 class Format_lisp(Format):
     """S-expressions, a.k.a. Lisp code. Specifically, SXML."""
 
-    def dict2sexp(self, dc, root='Root', indent='\t'):
-        """Convert a dictionary to an SXML string.
+    def dict2sexp(self, dct, root='Root', indent='\t'):
+        """Convert a dictionary to an SXML-style sexpr.
 
         Rules:
             int, float -> as-is
@@ -354,9 +364,10 @@ class Format_lisp(Format):
             other object -> str(obj)
 
         """
-        from xml.sax.saxutils import escape
+        # from xml.sax.saxutils import escape
 
         def tagset(key, val, level):
+            """Place a label and value in an s-expression."""
             if val in (None, ""):
                 return "%s(%s \"\")\n" % (indent*level, key)
 
@@ -370,6 +381,7 @@ class Format_lisp(Format):
                                     format_value(key, val, level))
 
         def format_value(key, val, level):
+            """Recurse with tagset to serialize a node."""
             if type(val) in (float, int):
                 pass
 
@@ -383,9 +395,10 @@ class Format_lisp(Format):
 
             return val
 
-        return tagset(root, dc, 0)
+        return tagset(root, dct, 0)
 
     def write(self, obj):
+        """Serialize."""
         return '(*TOP* (*PI* xml "version=\"1.0\" encoding=\"UTF-8\"")\n' + \
                 self.dict2sexp(obj.__dict__, root=__name__) + ')\n'
 
@@ -394,15 +407,32 @@ class Format_lisp(Format):
 # Plain text
 
 class Format_text(Format):
-    """ Prints all attributes as simple "Attribute: Value\n" pairs """
+    """ Prints all attributes as simple "Attribute: Value" pairs """
+
+    def __init__(self):
+        Format.__init__(self)
+
+    def flatten(self, node, indent=0):
+        """Generate key-val pairs from a dictionary.
+
+        If val is not a primitive, wing it.
+        """
+        if '__dict__' in node:
+            node = node.__dict__
+        if 'iteritems' in node:
+            for key, val in node.iteritems():
+                if type(val) in PRIMITIVES:
+                    yield (indent, key, str(val))
+                else:
+                    yield (indent, key, str(type(val)))
+                    self.flatten(val, indent+1)
+        else:
+            yield (indent, str(node))
 
     def write(self, obj):
-        # Recursively go through the object and flatten it, basically
-        str = ''
-        # TODO: recurse
-        for key, val in obj.__dict___:
-            str.join("%s: \t%s" % (key, val))
-        return str
+        """Serialize."""
+        return '\n'.join("%s%s\t%s" % (i*'\t', k, v)
+                         for i, k, v in self.flatten(obj))
 
 
 # -----------------------------------------------------------------------------
@@ -412,7 +442,7 @@ class Format_xml(Format):
     """Standard XML 1.0 using Python builtins."""
 
     def __init__(self):
-        pass
+        Format.__init__(self)
 
     def dict2xml(self, dct, root='Root', indent='\t'):
         """Convert a dictionary to an XML string.
@@ -427,7 +457,7 @@ class Format_xml(Format):
             other object -> escape(str(obj))
 
         """
-        from xml.sax.saxutils import escape
+        # from xml.sax.saxutils import escape
         
         def tagset(key, val, level):
             if val in (None, ""):
@@ -459,6 +489,7 @@ class Format_xml(Format):
         return tagset(root, dct, 0)
 
     def write(self, obj):
+        """Serialize."""
         return '<?xml version="1.0" encoding="UTF-8">\n' + \
                 self.dict2xml(obj.__dict__, root=__name__)
 
@@ -468,53 +499,50 @@ class Format_xml(Format):
 
 class Format_yaml(Format):
     """Yet Another Markup Language."""
-    # TODO:
-    # Look for existing code
+    # TODO: Look for a spec or existing code
 
     def write(self, obj):
+        """Serialize."""
         pass
-
-
-# -----------------------------------------------------------------------------
-# ???
-
-def flat_traversal(obj):
-    pass
-
 
 
 
 # -----------------------------------------------------------------------------
 # This is where the action happens
 
-def to_format(obj, format, name):
+def to_format(obj, format):
+    """Dispatch and object to the right serializer."""
     fmat = eval("Format_%s()" % format)
-    return fmat.write(obj, name)
+    return fmat.write(obj)
 
 
-def process_args(options, args):
+def test(obj):
+    """Clunky test: Convert a sample pickle to every format."""
+    path = 'example.pickle'
+    for format in ("datatree", "json", "py", "text", "xml", "yaml"):
+        if eval("options.to_" + format):
+            outfile = open("%s.%s" % (path, format), 'w')
+            outfile.write(to_format(obj, format, path))
+            outfile.close()
+
+
+def process_args(options, filepaths):
     """Command-line processing."""
-    filepaths = []
-    for arg in args:
-        if os.path.isfile(arg):
-            filepaths.append(arg)
-
     if not filepaths:
         echo("Warning: no input files given or found.")
         return
-        # ENH: operate on the files in the current directory?
 
-    for path in filepaths:
-        try:
-            infile = open(path, 'r')
-            obj = pickle.load(infile)
-            infile.close()
-        except (IOError, pickle.UnpicklingError), why:
-            echo("Couldn't load file: %s" % why)
+    for format in ("datatree", "json", "py", "text", "xml", "yaml"):
+        if format in options:
+            for path in filepaths:
+                try:
+                    infile = open(path, 'r')
+                    obj = pickle.load(infile)
+                    infile.close()
+                except (IOError, pickle.UnpicklingError), why:
+                    echo("Couldn't load file: %s" % why)
 
-        for format in ("datatree", "json", "py", "text", "xml", "yaml"):
-            if eval("options.to_" + format):
-                outfile = file(path + '.' + format, 'w')
+                outfile = open("%s.%s" % (path, format), 'w')
                 outfile.write(to_format(obj, format, path))
                 outfile.close()
 
@@ -523,22 +551,22 @@ if __name__ is "__main__":
     from optparse import OptionParser
 
     OP = OptionParser(USAGE)
-    OP.add_option("-d", "--datatree", dest="to_datatree",
+    OP.add_option("-d", "--datatree", dest="datatree",
                         action="store_true",
                         help="Output in Ivan Vecerina's DataTree format")
-    OP.add_option("-j", "--json", dest="to_json",
+    OP.add_option("-j", "--json", dest="json",
                         action="store_true",
                         help="Output in JSON format")
-    OP.add_option("-p", "--py", dest="to_py",
+    OP.add_option("-p", "--py", dest="py",
                         action="store_true",
                         help="Output as a formatted Python code representation")
-    OP.add_option("-t", "--text", dest="to_text",
+    OP.add_option("-t", "--text", dest="text",
                         action="store_true",
                         help="Output as plain, unformatted text")
-    OP.add_option("-x", "--xml", dest="to_xml",
+    OP.add_option("-x", "--xml", dest="xml",
                         action="store_true",
                         help="Output in XML 1.0 format")
-    OP.add_option("-y", "--yaml", dest="to_yaml",
+    OP.add_option("-y", "--yaml", dest="yaml",
                         action="store_true",
                         help="Output in YAML format")
 
